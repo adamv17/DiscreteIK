@@ -25,12 +25,13 @@ def calc_x(index, origin, b_avg, theta):
     if index == N:
         return origin
     unit = np.array([np.cos(theta[index]), np.sin(theta[index])])
-    x = origin + b_avg * unit + closed_len * unit
+    x = origin + b_avg[index] * unit + closed_len * unit
     return calc_x(index+1, x, b_avg, theta)
 
 def world_coord(theta):
-    for i,t in enumerate(theta, start=1):
-        theta[i] = t + theta[i-1]
+    for i in range(1,N):
+        theta[i] = theta[i] + theta[i-1]
+    return theta
 
 def fk(b_vals):
     b = b_vals.reshape((2, N))
@@ -46,7 +47,7 @@ def fk(b_vals):
 
 def loss(b_vals):
     x_N = fk(b_vals)
-    dist = np.linalg.norm(x_N - GOAL, order=2)
+    dist = np.linalg.norm(x_N - GOAL, ord=2)
     reg = -epsilon * np.sum(b_vals * (b_vals - np.ones(2*N)))
     return dist + reg
 
