@@ -1,25 +1,27 @@
 import numpy as np
 from scipy.optimize import minimize
+import matplotlib.pyplot as plt
 
-# ---------------------------- 
-#          Parameters          
-# ---------------------------- 
+# ----------------------------
+#           Parameters
+# ----------------------------
 
-N = 78              # Number of frusta 
-epsilon = (2e-3)*N  # Regularization term (greater than 0)
-max_iter = 100      # Max optimizer iterations 
+N = 150             # Number of frusta
+epsilon = (1e-3)*N  # Regularization term (greater than 0)
+max_iter = 100      # Max optimizer iterations
 D = 4               # Frusta Diameter
-closed_len = 1/3.   # Length of closed frusta (l0)  
+closed_len = 1/3.   # Length of closed frusta (l0)
+num_starts = 10     # Number of optimization runs (multi-start)
 
-# ---------------------------- 
-#            Goal          
-# ---------------------------- 
+# ----------------------------
+#           Goal
+# ----------------------------
 
 GOAL = np.array([N-20, 15])
 
-# ---------------------------- 
-#      Forward Kinematics          
-# ---------------------------- 
+# ----------------------------
+#       Forward Kinematics
+# ----------------------------
 
 def calc_x(index, origin, b_avg, theta):
     if index == N:
@@ -29,21 +31,23 @@ def calc_x(index, origin, b_avg, theta):
     return calc_x(index+1, x, b_avg, theta)
 
 def world_coord(theta):
+    # This function modifies theta in-place by creating cumulative sums
     for i in range(1,N):
         theta[i] = theta[i] + theta[i-1]
     return theta
 
 def fk(b_vals):
     b = b_vals.reshape((2, N))
+    # Using a copy prevents modification of the original array by world_coord
     theta = np.arcsin((b[0,:] - b[1,:]) / D)
-    world_theta = world_coord(theta)
+    world_theta = world_coord(theta.copy())
     x_N = calc_x(0, np.array([0,0]), (b[0,:] + b[1,:]) / 2, world_theta)
     return x_N
 
 
-# ---------------------------- 
-#        Loss Function          
-# ---------------------------- 
+# ----------------------------
+#         Loss Function
+# ----------------------------
 
 def loss(b_vals):
     x_N = fk(b_vals)
@@ -51,48 +55,142 @@ def loss(b_vals):
     reg = -epsilon * np.sum(b_vals * (b_vals - np.ones(2*N)))
     return dist + reg
 
-# ---------------------------- 
-#         Constraints           
-# ---------------------------- 
+# ----------------------------
+#         Constraints
+# ----------------------------
 
 def ineq_lower(b_vals):
     return b_vals
 
 def ineq_upper(b_vals):
-    return np.ones(2*N) - b_vals 
+    return np.ones(2*N) - b_vals
 
 # 0 <= b <= 1
 constraints = [{'type': 'ineq', 'fun': ineq_lower}, {'type': 'ineq', 'fun': ineq_upper}]
 
-# ---------------------------- 
-#   Initialize Opt. Params.          
-# ---------------------------- 
+# ----------------------------
+#     Initialize Opt. Params.
+# ----------------------------
 
 def init_params():
     return np.random.rand(2 * N)
 
-# ---------------------------- 
-#        Optimization          
-# ---------------------------- 
+# ----------------------------
+#         Optimization
+# ----------------------------
 
-optimizer_options = {'maxiter': max_iter, 'ftol': 1e-8, 'disp': True}
-initial_guess = init_params()
+optimizer_options = {'maxiter': max_iter, 'ftol': 1e-8, 'disp': False} # disp is False to avoid clutter
 
-result = minimize(loss, x0=initial_guess, method='SLSQP', options=optimizer_options, constraints=constraints)
+best_result = None
+best_rounded_loss = np.inf
 
-# ---------------------------- 
-#          Analysis          
-# ---------------------------- 
+print(f"Starting multi-start optimization with {num_starts} runs...")
+print("NOTE: Selecting best solution based on the loss from ROUNDED coefficients.")
 
-b_star = result.x.reshape((2, N))
+for i in range(num_starts):
+    print(f"\n--- Optimization Run {i+1}/{num_starts} ---")
+    initial_guess = init_params()
+    
+    current_result = minimize(loss, x0=initial_guess, method='SLSQP', options=optimizer_options, constraints=constraints)
+
+    if current_result.success:
+        # Calculate the loss for the rounded result of the current run
+        current_res_bits = np.round(current_result.x)
+        current_rounded_loss = loss(current_res_bits)
+        
+        print(f"Run {i+1} successful. Continuous Loss: {current_result.fun:.4f}, Rounded Loss: {current_rounded_loss:.4f}")
+
+        # The core change: compare based on the rounded loss
+        if current_rounded_loss < best_rounded_loss:
+            best_rounded_loss = current_rounded_loss
+            best_result = current_result
+            print(f"*** New best solution found (Rounded Loss: {best_rounded_loss:.4f})! ***")
+    else:
+        print(f"Run {i+1} did not converge.")
+
+# Check if any successful optimization was found
+if best_result is None:
+    raise RuntimeError("Optimization failed to find a solution across all starts. Try increasing max_iter or num_starts.")
+
+print("\nMulti-start optimization complete. Using best result for analysis.")
+
+# ----------------------------
+#           Analysis
+# ----------------------------
+
+print("\n" + "="*30)
+print("     Optimization Results")
+print("="*30)
+
+# --- Calculations ---
+# Use the best result found from all the runs
+b_star = best_result.x
 x_N_star = fk(b_star)
-res_bits = np.round(result.x)
-x_N_bits = fk(res_bits.reshape(2,N))
+res_bits = np.round(b_star)
+x_N_bits = fk(res_bits)
 
-print("Optimization Results")
-print("Goal:", GOAL)
-print("Unrounded Optimal Coefficients:", b_star)
-print("Unrounded Endpoint:", x_N_star)
-print("Rounded Endpoint:", x_N_bits)
-print("Final Loss Unrounded:", loss(result.x))
-print("Final Loss Rounded:", loss(res_bits))
+# --- Print Results ---
+print(f"Goal: {GOAL}")
+print(f"\nFinal Loss (Unrounded): {loss(b_star):.4f}")
+print(f"Endpoint (Unrounded): {x_N_star}")
+print(f"\nFinal Loss (Rounded):   {loss(res_bits):.4f}")
+print(f"Endpoint (Rounded):   {x_N_bits}")
+print("="*30)
+
+
+# --- Graphical Analysis ---
+
+def get_all_coords(b_vals):
+    """Calculates the coordinates of each joint in the frusta chain."""
+    b = b_vals.reshape((2, N))
+    theta = np.arcsin((b[0, :] - b[1, :]) / D)
+    world_theta = world_coord(theta.copy()) # Use a copy to be safe
+    b_avg = (b[0, :] + b[1, :]) / 2
+
+    # Store coordinates of each joint, starting with the origin
+    coords = np.zeros((N + 1, 2))
+    current_pos = np.array([0., 0.])
+    coords[0, :] = current_pos
+
+    for i in range(N):
+        unit = np.array([np.cos(world_theta[i]), np.sin(world_theta[i])])
+        # Total length of the frustum segment
+        length = (1 - closed_len) * b_avg[i] + closed_len
+        current_pos = current_pos + length * unit
+        coords[i+1, :] = current_pos
+    return coords
+
+def plot_results(b_continuous, b_binary):
+    """Plots the robot configuration for continuous and binary coefficients."""
+    coords_continuous = get_all_coords(b_continuous)
+    coords_binary = get_all_coords(b_binary)
+
+    plt.style.use('seaborn-v0_8-whitegrid')
+    plt.figure(figsize=(12, 10))
+
+    # Plot the unrounded (optimal continuous) configuration
+    plt.plot(coords_continuous[:, 0], coords_continuous[:, 1],
+             'b-o', markersize=3, linewidth=2, label='Optimal (Continuous)')
+
+    # Plot the rounded (binary) configuration
+    plt.plot(coords_binary[:, 0], coords_binary[:, 1],
+             'g--s', markersize=3, linewidth=2, label='Optimal (Binary)')
+
+    # Highlight endpoints and the goal
+    # --- FIX: Format each coordinate element individually ---
+    plt.plot(coords_continuous[-1, 0], coords_continuous[-1, 1],
+             'b*', markersize=15, label=f'Endpoint (Continuous): ({coords_continuous[-1][0]:.2f}, {coords_continuous[-1][1]:.2f})')
+    plt.plot(coords_binary[-1, 0], coords_binary[-1, 1],
+             'gP', markersize=12, label=f'Endpoint (Binary): ({coords_binary[-1][0]:.2f}, {coords_binary[-1][1]:.2f})')
+    plt.plot(GOAL[0], GOAL[1],
+             'rX', markersize=15, label=f'Goal: ({GOAL[0]}, {GOAL[1]})')
+
+    plt.title('Soft Robot Configuration Analysis', fontsize=16)
+    plt.xlabel('X Coordinate', fontsize=12)
+    plt.ylabel('Y Coordinate', fontsize=12)
+    plt.legend(fontsize=10)
+    plt.axis('equal') # Ensure aspect ratio is 1:1
+    plt.show()
+
+# Generate the plot
+plot_results(b_star, res_bits)
