@@ -1,6 +1,8 @@
 import numpy as np
 from scipy.optimize import minimize
 import matplotlib.pyplot as plt
+import os
+from datetime import datetime
 
 # ----------------------------
 #           Parameters
@@ -138,6 +140,19 @@ print(f"Endpoint (Rounded):   {x_N_bits}")
 print("="*30)
 
 
+# --- File Logging Setup ---
+log_dir = "log"
+if not os.path.exists(log_dir):
+    os.makedirs(log_dir)
+    print(f"Created directory: {log_dir}")
+
+# Generate a unique filename based on the current time
+timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+base_filename = f"run_{timestamp}"
+log_filepath = os.path.join(log_dir, f"{base_filename}.txt")
+img_filepath = os.path.join(log_dir, f"{base_filename}.png")
+
+
 # --- Graphical Analysis ---
 
 def get_all_coords(b_vals):
@@ -147,37 +162,30 @@ def get_all_coords(b_vals):
     world_theta = world_coord(theta.copy()) # Use a copy to be safe
     b_avg = (b[0, :] + b[1, :]) / 2
 
-    # Store coordinates of each joint, starting with the origin
     coords = np.zeros((N + 1, 2))
     current_pos = np.array([0., 0.])
     coords[0, :] = current_pos
 
     for i in range(N):
         unit = np.array([np.cos(world_theta[i]), np.sin(world_theta[i])])
-        # Total length of the frustum segment
         length = (1 - closed_len) * b_avg[i] + closed_len
         current_pos = current_pos + length * unit
         coords[i+1, :] = current_pos
     return coords
 
-def plot_results(b_continuous, b_binary):
-    """Plots the robot configuration for continuous and binary coefficients."""
+def plot_and_save_results(b_continuous, b_binary, filename):
+    """Plots the robot configuration and saves it to a file."""
     coords_continuous = get_all_coords(b_continuous)
     coords_binary = get_all_coords(b_binary)
 
     plt.style.use('seaborn-v0_8-whitegrid')
     plt.figure(figsize=(12, 10))
 
-    # Plot the unrounded (optimal continuous) configuration
     plt.plot(coords_continuous[:, 0], coords_continuous[:, 1],
              'b-o', markersize=3, linewidth=2, label='Optimal (Continuous)')
-
-    # Plot the rounded (binary) configuration
     plt.plot(coords_binary[:, 0], coords_binary[:, 1],
              'g--s', markersize=3, linewidth=2, label='Optimal (Binary)')
-
-    # Highlight endpoints and the goal
-    # --- FIX: Format each coordinate element individually ---
+    
     plt.plot(coords_continuous[-1, 0], coords_continuous[-1, 1],
              'b*', markersize=15, label=f'Endpoint (Continuous): ({coords_continuous[-1][0]:.2f}, {coords_continuous[-1][1]:.2f})')
     plt.plot(coords_binary[-1, 0], coords_binary[-1, 1],
@@ -189,8 +197,42 @@ def plot_results(b_continuous, b_binary):
     plt.xlabel('X Coordinate', fontsize=12)
     plt.ylabel('Y Coordinate', fontsize=12)
     plt.legend(fontsize=10)
-    plt.axis('equal') # Ensure aspect ratio is 1:1
+    plt.axis('equal')
+    
+    # Save the figure to the specified path
+    plt.savefig(filename)
+    print(f"Figure saved to: {filename}")
     plt.show()
 
-# Generate the plot
-plot_results(b_star, res_bits)
+# Generate and save the plot
+plot_and_save_results(b_star, res_bits, img_filepath)
+
+
+# --- Save Text Log File ---
+with open(log_filepath, 'w') as f:
+    f.write("="*30 + "\n")
+    f.write("   Optimization Log\n")
+    f.write("="*30 + "\n")
+    f.write(f"Run Timestamp: {timestamp}\n\n")
+    
+    f.write("--- Parameters ---\n")
+    f.write(f"Number of frusta (N): {N}\n")
+    f.write(f"Regularization (epsilon): {epsilon}\n")
+    f.write(f"Max Iterations: {max_iter}\n")
+    f.write(f"Number of Starts: {num_starts}\n")
+    f.write(f"Goal: {GOAL}\n\n")
+
+    f.write("--- Results ---\n")
+    f.write(f"Final Loss (Unrounded): {loss(b_star):.6f}\n")
+    f.write(f"Endpoint (Unrounded): {x_N_star}\n\n")
+    f.write(f"Final Loss (Rounded):   {loss(res_bits):.6f}\n")
+    f.write(f"Endpoint (Rounded):   {x_N_bits}\n\n")
+    
+    f.write("--- Optimal Coefficients (Continuous) ---\n")
+    np.savetxt(f, b_star, fmt='%.8f')
+    f.write("\n")
+
+    f.write("--- Optimal Coefficients (Rounded) ---\n")
+    np.savetxt(f, res_bits, fmt='%d')
+
+print(f"Log file saved to: {log_filepath}")
