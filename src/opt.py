@@ -5,8 +5,8 @@ from scipy.optimize import minimize
 #          Parameters          
 # ---------------------------- 
 
-N = 150             # Number of frusta 
-epsilon = (1e-3)*N  # Regularization term (greater than 0)
+N = 78              # Number of frusta 
+epsilon = (2e-3)*N  # Regularization term (greater than 0)
 max_iter = 100      # Max optimizer iterations 
 D = 4               # Frusta Diameter
 closed_len = 1/3.   # Length of closed frusta (l0)  
@@ -15,7 +15,7 @@ closed_len = 1/3.   # Length of closed frusta (l0)
 #            Goal          
 # ---------------------------- 
 
-GOAL = np.array([N, 0])
+GOAL = np.array([N-20, 15])
 
 # ---------------------------- 
 #      Forward Kinematics          
@@ -86,10 +86,13 @@ result = minimize(loss, x0=initial_guess, method='SLSQP', options=optimizer_opti
 
 b_star = result.x.reshape((2, N))
 x_N_star = fk(b_star)
+res_bits = np.round(result.x)
+x_N_bits = fk(res_bits.reshape(2,N))
 
-print("Goal:", GOAL)
 print("Optimization Results")
-print("Optimal Coefficients:", b_star)
-print("Endpoint:", x_N_star)
-print("Final Loss:", loss(result.x))
-print(fk(np.ones(2*N)))  # For testing with all ones
+print("Goal:", GOAL)
+print("Unrounded Optimal Coefficients:", b_star)
+print("Unrounded Endpoint:", x_N_star)
+print("Rounded Endpoint:", x_N_bits)
+print("Final Loss Unrounded:", loss(result.x))
+print("Final Loss Rounded:", loss(res_bits))
