@@ -5,8 +5,8 @@ from scipy.optimize import minimize
 #          Parameters          
 # ---------------------------- 
 
-N = 5               # Number of frusta 
-epsilon = 2e-2*N    # Regularization term (greater than 0)
+N = 150             # Number of frusta 
+epsilon = (1e-3)*N  # Regularization term (greater than 0)
 max_iter = 100      # Max optimizer iterations 
 D = 4               # Frusta Diameter
 closed_len = 1/3.   # Length of closed frusta (l0)  
@@ -15,7 +15,7 @@ closed_len = 1/3.   # Length of closed frusta (l0)
 #            Goal          
 # ---------------------------- 
 
-GOAL = np.array([5, 0])
+GOAL = np.array([N, 0])
 
 # ---------------------------- 
 #      Forward Kinematics          
@@ -92,4 +92,4 @@ print("Optimization Results")
 print("Optimal Coefficients:", b_star)
 print("Endpoint:", x_N_star)
 print("Final Loss:", loss(result.x))
-print(fk(np.array([1, 1, 1, 1, 1, 1, 1, 1, 1, 1])))  # For testing with all ones
+print(fk(np.ones(2*N)))  # For testing with all ones
