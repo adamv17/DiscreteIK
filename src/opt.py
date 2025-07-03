@@ -6,7 +6,7 @@ from scipy.optimize import minimize
 # ---------------------------- 
 
 N = 5               # Number of frusta 
-epsilon = 10        # Regularization term (greater than 0)
+epsilon = 2e-2*N    # Regularization term (greater than 0)
 max_iter = 100      # Max optimizer iterations 
 D = 4               # Frusta Diameter
 closed_len = 1/3.   # Length of closed frusta (l0)  
@@ -15,7 +15,7 @@ closed_len = 1/3.   # Length of closed frusta (l0)
 #            Goal          
 # ---------------------------- 
 
-GOAL = np.array([100, 100])
+GOAL = np.array([5, 0])
 
 # ---------------------------- 
 #      Forward Kinematics          
@@ -25,7 +25,7 @@ def calc_x(index, origin, b_avg, theta):
     if index == N:
         return origin
     unit = np.array([np.cos(theta[index]), np.sin(theta[index])])
-    x = origin + b_avg[index] * unit + closed_len * unit
+    x = origin + (1-closed_len) * b_avg[index] * unit + closed_len * unit
     return calc_x(index+1, x, b_avg, theta)
 
 def world_coord(theta):
@@ -75,13 +75,21 @@ def init_params():
 #        Optimization          
 # ---------------------------- 
 
-optimizer_options = {'maxiter': max_iter, 'ftol': 1e-6, 'gtol': 1e-8, 'disp': False}
+optimizer_options = {'maxiter': max_iter, 'ftol': 1e-8, 'disp': True}
 initial_guess = init_params()
 
-result = minimize(loss, x0=initial_guess, method='L-BFGS-B', options=optimizer_options, constraints=constraints)
+result = minimize(loss, x0=initial_guess, method='SLSQP', options=optimizer_options, constraints=constraints)
 
 # ---------------------------- 
 #          Analysis          
 # ---------------------------- 
 
-print(result.x)
+b_star = result.x.reshape((2, N))
+x_N_star = fk(b_star)
+
+print("Goal:", GOAL)
+print("Optimization Results")
+print("Optimal Coefficients:", b_star)
+print("Endpoint:", x_N_star)
+print("Final Loss:", loss(result.x))
+print(fk(np.array([1, 1, 1, 1, 1, 1, 1, 1, 1, 1])))  # For testing with all ones
