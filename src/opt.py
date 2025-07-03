@@ -9,7 +9,7 @@ from datetime import datetime
 # ----------------------------
 
 N = 150             # Number of frusta
-epsilon = (2e2)/N  # Regularization term (greater than 0)
+epsilon = (2e1)/N   # Regularization term (greater than 0)
 max_iter = 100      # Max optimizer iterations
 D = 4               # Frusta Diameter
 closed_len = 1/3.   # Length of closed frusta (l0)
@@ -19,7 +19,7 @@ num_starts = 10     # Number of optimization runs (multi-start)
 #           Goal
 # ----------------------------
 
-GOAL = np.array([N-20, 15])
+GOAL = np.array([N-30, 30])
 
 # ----------------------------
 #       Forward Kinematics
@@ -152,7 +152,6 @@ base_filename = f"run_{timestamp}"
 log_filepath = os.path.join(log_dir, f"{base_filename}.txt")
 img_filepath = os.path.join(log_dir, f"{base_filename}.png")
 
-
 # --- Graphical Analysis ---
 
 def get_all_coords(b_vals):
@@ -204,9 +203,6 @@ def plot_and_save_results(b_continuous, b_binary, filename):
     print(f"Figure saved to: {filename}")
     plt.show()
 
-# Generate and save the plot
-plot_and_save_results(b_star, res_bits, img_filepath)
-
 
 # --- Save Text Log File ---
 with open(log_filepath, 'w') as f:
@@ -236,3 +232,6 @@ with open(log_filepath, 'w') as f:
     np.savetxt(f, res_bits, fmt='%d')
 
 print(f"Log file saved to: {log_filepath}")
+
+# Generate and save the plot
+plot_and_save_results(b_star, res_bits, img_filepath)
