@@ -9,7 +9,7 @@ from datetime import datetime
 # ----------------------------
 
 N = 150             # Number of frusta
-epsilon = (1e-3)*N  # Regularization term (greater than 0)
+epsilon = (2e2)/N  # Regularization term (greater than 0)
 max_iter = 100      # Max optimizer iterations
 D = 4               # Frusta Diameter
 closed_len = 1/3.   # Length of closed frusta (l0)
