@@ -53,7 +53,7 @@ def fk(b_vals):
 
 def loss(b_vals):
     x_N = fk(b_vals)
-    dist = np.linalg.norm(x_N - GOAL, ord=2)
+    dist = np.linalg.norm(x_N - GOAL, ord=2)**2
     reg = -epsilon * np.sum(b_vals * (b_vals - np.ones(2*N)))
     return dist + reg
 
