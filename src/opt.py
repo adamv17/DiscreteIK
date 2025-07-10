@@ -13,12 +13,14 @@ D = 4               # Frusta Diameter
 closed_len = 1/3.   # Length of closed frusta (l0)
 
 epsilon = (4e1)/N   # Binary Regularization Term (greater than 0)
-# --- Penalty Tuning ---
 zeta = (1e-1)/N     # Penalize opening a single frustum instead of in groups
-# Increased bending penalty to discourage any bending more strongly.
 xi = (5e0)/N        # Penalize Bending
-# New penalty to enforce smooth curves and directly penalize zig-zagging.
-kappa = (1e0)/N # Penalize changes in curvature between frustums. Set to 0 to disable.
+
+# --- Obstacle Parameters ---
+# Obstacles are now defined as hard constraints, not penalties.
+OBSTACLES = [
+    {'center': np.array([40, 0]), 'radius': 8}
+]
 
 
 max_iter = 100      # Max optimizer iterations
@@ -28,7 +30,7 @@ num_starts = 10     # Number of optimization runs (multi-start)
 #           Goal
 # ----------------------------
 
-GOAL = np.array([N-10, 10])
+GOAL = np.array([50,0])
 
 # ----------------------------
 #       Forward Kinematics
@@ -47,16 +49,29 @@ def world_coord(theta):
     """Calculates the cumulative sum of angles to get world coordinates."""
     return np.cumsum(theta)
 
-def fk(b_vals):
-    """Computes the forward kinematics to find the end-effector position."""
+def fk(b_vals, return_all_coords=False):
+    """
+    Computes the forward kinematics.
+    
+    Args:
+        b_vals (np.array): The actuator coefficients.
+        return_all_coords (bool): If True, returns all joint coordinates. 
+                                  Otherwise, returns only the end-effector position.
+    
+    Returns:
+        np.array: End-effector position or all joint coordinates.
+    """
     b = b_vals.reshape((2, N))
     theta = np.arcsin(np.clip((b[0,:] - b[1,:]) / D, -1.0, 1.0))
     world_theta = world_coord(theta)
     b_avg = (b[0,:] + b[1,:]) / 2
     
-    # Using the more efficient iterative calculation
     all_coords = calc_x_iterative(b_avg, world_theta)
-    return all_coords[-1]
+    
+    if return_all_coords:
+        return all_coords
+    else:
+        return all_coords[-1]
 
 
 # ----------------------------
@@ -65,7 +80,9 @@ def fk(b_vals):
 
 def loss(b_vals):
     """Calculates the total loss for the optimization problem."""
-    x_N = fk(b_vals)
+    # Obstacle avoidance is now a hard constraint, so it's removed from the loss.
+    x_N = fk(b_vals, return_all_coords=False)
+    
     dist_sq = np.sum(np.square(x_N - GOAL))
     
     reg_bin = -epsilon * np.sum(b_vals * (b_vals - 1.0))
@@ -78,15 +95,57 @@ def loss(b_vals):
     theta = np.arcsin(np.clip((b[0,:] - b[1,:]) / D, -1.0, 1.0))
     reg_bend = xi * np.sum(np.square(theta))
 
-    reg_smooth = kappa * np.sum(np.square(theta[:-1] - theta[1:]))
-
-    return dist_sq + reg_bin + reg_group + reg_bend + reg_smooth
+    return dist_sq + reg_bin + reg_group + reg_bend
 
 # ----------------------------
 #         Constraints
 # ----------------------------
 
+# Bounds are handled by the 'bounds' argument in minimize
 bounds = [(0, 1) for _ in range(2 * N)]
+
+# --- Generate Obstacle Constraints Dynamically ---
+# This approach creates a set of constraint functions for each obstacle,
+# ensuring that all joints and segments avoid the obstacle.
+constraints = []
+for obstacle in OBSTACLES:
+    center = obstacle['center']
+    radius = obstacle['radius']
+
+    # 1. Joint Constraints: Ensure every joint is outside the obstacle.
+    # The constraint is dist(joint, center) - radius >= 0
+    def joint_constraint_func(b_vals, c=center, r=radius):
+        all_coords = fk(b_vals, return_all_coords=True)
+        distances = np.linalg.norm(all_coords - c, axis=1)
+        return distances - r
+
+    constraints.append({'type': 'ineq', 'fun': joint_constraint_func})
+
+    # 2. Segment Constraints: Ensure line segments between joints don't intersect the obstacle.
+    # The constraint is dist(segment, center) - radius >= 0
+    def segment_constraint_func(b_vals, c=center, r=radius):
+        all_coords = fk(b_vals, return_all_coords=True)
+        p1s = all_coords[:-1]
+        p2s = all_coords[1:]
+        
+        line_vecs = p2s - p1s
+        line_len_sq = np.sum(line_vecs**2, axis=1)
+        
+        p1_to_center = c - p1s
+        
+        dot_products = np.sum(p1_to_center * line_vecs, axis=1)
+        
+        # Find the closest point on each line segment to the obstacle center
+        t = np.divide(dot_products, line_len_sq, out=np.zeros_like(dot_products), where=line_len_sq!=0)
+        t_clamped = np.clip(t, 0, 1)
+        projections = p1s + t_clamped[:, np.newaxis] * line_vecs
+        
+        min_distances_to_center = np.linalg.norm(projections - c, axis=1)
+        
+        return min_distances_to_center - r
+
+    constraints.append({'type': 'ineq', 'fun': segment_constraint_func})
+
 
 # ----------------------------
 #     Initialize Opt. Params.
@@ -112,7 +171,8 @@ for i in range(num_starts):
     print(f"\n--- Optimization Run {i+1}/{num_starts} ---")
     initial_guess = init_params()
     
-    current_result = minimize(loss, x0=initial_guess, method='SLSQP', options=optimizer_options, bounds=bounds)
+    # Pass the dynamically generated constraints to the optimizer
+    current_result = minimize(loss, x0=initial_guess, method='SLSQP', options=optimizer_options, bounds=bounds, constraints=constraints)
 
     if current_result.success:
         current_res_bits = np.round(current_result.x)
@@ -150,6 +210,7 @@ print(f"\nFinal Loss (Unrounded): {loss(b_star):.4f}")
 print(f"Endpoint (Unrounded): {x_N_star}")
 print(f"\nFinal Loss (Rounded):   {loss(res_bits):.4f}")
 print(f"Endpoint (Rounded):   {x_N_bits}")
+print(f"Distance from Endpoint: {np.sum(np.square(x_N_bits-x_N_star)):.4f}")
 print("="*30)
 
 
@@ -167,14 +228,8 @@ img_filepath = os.path.join(log_dir, f"{base_filename}.png")
 # --- Graphical Analysis ---
 
 def get_all_coords(b_vals):
-    """Calculates the coordinates of each joint in the frusta chain."""
-    b = b_vals.reshape((2, N))
-    theta = np.arcsin(np.clip((b[0, :] - b[1, :]) / D, -1.0, 1.0))
-    world_theta = world_coord(theta)
-    b_avg = (b[0, :] + b[1, :]) / 2
-    
-    # Use the efficient iterative FK calculation
-    return calc_x_iterative(b_avg, world_theta)
+    """Convenience function to pass to the plotting function."""
+    return fk(b_vals, return_all_coords=True)
 
 def plot_and_save_results(b_continuous, b_binary, filename):
     """Plots the robot configuration and saves it to a file."""
@@ -182,25 +237,33 @@ def plot_and_save_results(b_continuous, b_binary, filename):
     coords_binary = get_all_coords(b_binary)
 
     plt.style.use('seaborn-v0_8-whitegrid')
-    plt.figure(figsize=(12, 10))
+    fig, ax = plt.subplots(figsize=(12, 10))
 
-    plt.plot(coords_continuous[:, 0], coords_continuous[:, 1],
+    ax.plot(coords_continuous[:, 0], coords_continuous[:, 1],
              'b-o', markersize=3, linewidth=2, label='Optimal (Continuous)')
-    plt.plot(coords_binary[:, 0], coords_binary[:, 1],
+    ax.plot(coords_binary[:, 0], coords_binary[:, 1],
              'g--s', markersize=3, linewidth=2, label='Optimal (Binary)')
     
-    plt.plot(coords_continuous[-1, 0], coords_continuous[-1, 1],
+    ax.plot(coords_continuous[-1, 0], coords_continuous[-1, 1],
              'b*', markersize=15, label=f'Endpoint (Continuous): ({coords_continuous[-1][0]:.2f}, {coords_continuous[-1][1]:.2f})')
-    plt.plot(coords_binary[-1, 0], coords_binary[-1, 1],
+    ax.plot(coords_binary[-1, 0], coords_binary[-1, 1],
              'gP', markersize=12, label=f'Endpoint (Binary): ({coords_binary[-1][0]:.2f}, {coords_binary[-1][1]:.2f})')
-    plt.plot(GOAL[0], GOAL[1],
+    ax.plot(GOAL[0], GOAL[1],
              'rX', markersize=15, label=f'Goal: ({GOAL[0]}, {GOAL[1]})')
+    
+    # --- Draw Obstacles ---
+    for obstacle in OBSTACLES:
+        # Use a unique label for the first obstacle to avoid duplicate legend entries
+        label = 'Obstacle' if 'drawn' not in obstacle else None
+        circle = plt.Circle(obstacle['center'], obstacle['radius'], color='r', fill=True, alpha=0.3, label=label)
+        ax.add_artist(circle)
+        obstacle['drawn'] = True # Mark as drawn
 
-    plt.title('Soft Robot Configuration Analysis', fontsize=16)
-    plt.xlabel('X Coordinate', fontsize=12)
-    plt.ylabel('Y Coordinate', fontsize=12)
-    plt.legend(fontsize=10)
-    plt.axis('equal')
+    ax.set_title('Soft Robot Configuration Analysis', fontsize=16)
+    ax.set_xlabel('X Coordinate', fontsize=12)
+    ax.set_ylabel('Y Coordinate', fontsize=12)
+    ax.legend(fontsize=10)
+    ax.axis('equal')
     
     plt.savefig(filename)
     print(f"Figure saved to: {filename}")
@@ -219,10 +282,14 @@ with open(log_filepath, 'w') as f:
     f.write(f"Binary Regularization (epsilon): {epsilon:.6f}\n")
     f.write(f"Grouping Penalty (zeta):       {zeta:.6f}\n")
     f.write(f"Bending Penalty (xi):          {xi:.6f}\n")
-    f.write(f"Smoothness Penalty (lambda):   {kappa:.6f}\n") 
     f.write(f"Max Iterations: {max_iter}\n")
     f.write(f"Number of Starts: {num_starts}\n")
-    f.write(f"Goal: {GOAL}\n\n")
+    f.write(f"Goal: {GOAL}\n")
+    f.write("Obstacles (handled by constraints):\n")
+    for i, obs in enumerate(OBSTACLES):
+        f.write(f"  - Obstacle {i+1}: Center={obs['center']}, Radius={obs['radius']}\n")
+    f.write("\n")
+
 
     f.write("--- Results ---\n")
     f.write(f"Final Loss (Unrounded): {loss(b_star):.6f}\n")
