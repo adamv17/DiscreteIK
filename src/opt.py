@@ -308,7 +308,7 @@ with open(log_filepath, 'w') as f:
     f.write(f"Binary Regularization (epsilon): {epsilon:.6f}\n")
     f.write(f"Grouping Penalty (zeta):       {zeta:.6f}\n")
     f.write(f"Bending Penalty (xi):          {xi:.6f}\n")
-    f.write(f"Zig-Zag Penalty (lambda):      {kappa:.6f}\n")
+    f.write(f"Zig-Zag Penalty (kappa):      {kappa:.6f}\n")
     f.write(f"Max Iterations: {max_iter}\n")
     f.write(f"Number of Starts: {num_starts}\n")
     f.write(f"Goal: {GOAL}\n")
