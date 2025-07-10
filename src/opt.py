@@ -13,8 +13,13 @@ D = 4               # Frusta Diameter
 closed_len = 1/3.   # Length of closed frusta (l0)
 
 epsilon = (4e1)/N   # Binary Regularization Term (greater than 0)
+# --- Penalty Tuning ---
 zeta = (1e-1)/N     # Penalize opening a single frustum instead of in groups
-xi = (5e-1)/N       # Penalize Bending
+# Increased bending penalty to discourage any bending more strongly.
+xi = (5e0)/N        # Penalize Bending
+# New penalty to enforce smooth curves and directly penalize zig-zagging.
+kappa = (1e0)/N # Penalize changes in curvature between frustums. Set to 0 to disable.
+
 
 max_iter = 100      # Max optimizer iterations
 num_starts = 10     # Number of optimization runs (multi-start)
@@ -29,29 +34,29 @@ GOAL = np.array([N-10, 10])
 #       Forward Kinematics
 # ----------------------------
 
-def calc_x(index, origin, b_avg, theta):
-    """Recursive function to calculate the position of the end-effector."""
-    if index == N:
-        return origin
-    unit = np.array([np.cos(theta[index]), np.sin(theta[index])])
-    length = (1 - closed_len) * b_avg[index] + closed_len
-    x = origin + length * unit
-    return calc_x(index + 1, x, b_avg, theta)
+def calc_x_iterative(b_avg, world_theta):
+    """Iterative function to calculate the position of all joints."""
+    coords = np.zeros((N + 1, 2))
+    unit_vectors = np.stack((np.cos(world_theta), np.sin(world_theta)), axis=1)
+    lengths = (1 - closed_len) * b_avg + closed_len
+    segment_vectors = lengths[:, np.newaxis] * unit_vectors
+    coords[1:, :] = np.cumsum(segment_vectors, axis=0)
+    return coords
 
 def world_coord(theta):
     """Calculates the cumulative sum of angles to get world coordinates."""
-    # This function modifies theta in-place by creating cumulative sums
     return np.cumsum(theta)
 
 def fk(b_vals):
     """Computes the forward kinematics to find the end-effector position."""
     b = b_vals.reshape((2, N))
-    # Using a copy prevents modification of the original array by world_coord
     theta = np.arcsin(np.clip((b[0,:] - b[1,:]) / D, -1.0, 1.0))
     world_theta = world_coord(theta)
     b_avg = (b[0,:] + b[1,:]) / 2
-    x_N = calc_x(0, np.array([0,0]), b_avg, world_theta)
-    return x_N
+    
+    # Using the more efficient iterative calculation
+    all_coords = calc_x_iterative(b_avg, world_theta)
+    return all_coords[-1]
 
 
 # ----------------------------
@@ -61,29 +66,26 @@ def fk(b_vals):
 def loss(b_vals):
     """Calculates the total loss for the optimization problem."""
     x_N = fk(b_vals)
-    # Use squared norm as per the objective function
     dist_sq = np.sum(np.square(x_N - GOAL))
     
-    # Binary regularization
     reg_bin = -epsilon * np.sum(b_vals * (b_vals - 1.0))
 
     b = b_vals.reshape((2, N))
     
-    # Grouping penalty for 'open' state
-    openness = np.prod(b, axis=0) # Calculates b1,i * b2,i for each frustum i
+    openness = np.prod(b, axis=0)
     reg_group = zeta * np.sum(np.square(openness[:-1] - openness[1:]))
 
-    # Bending penalty
     theta = np.arcsin(np.clip((b[0,:] - b[1,:]) / D, -1.0, 1.0))
     reg_bend = xi * np.sum(np.square(theta))
 
-    return dist_sq + reg_bin + reg_group + reg_bend
+    reg_smooth = kappa * np.sum(np.square(theta[:-1] - theta[1:]))
+
+    return dist_sq + reg_bin + reg_group + reg_bend + reg_smooth
 
 # ----------------------------
 #         Constraints
 # ----------------------------
 
-# Bounds are more efficiently handled by the optimizer's `bounds` argument
 bounds = [(0, 1) for _ in range(2 * N)]
 
 # ----------------------------
@@ -110,17 +112,14 @@ for i in range(num_starts):
     print(f"\n--- Optimization Run {i+1}/{num_starts} ---")
     initial_guess = init_params()
     
-    # Using 'L-BFGS-B' or 'TNC' can be more efficient for simple box bounds
     current_result = minimize(loss, x0=initial_guess, method='SLSQP', options=optimizer_options, bounds=bounds)
 
     if current_result.success:
-        # Calculate the loss for the rounded result of the current run
         current_res_bits = np.round(current_result.x)
         current_rounded_loss = loss(current_res_bits)
         
         print(f"Run {i+1} successful. Continuous Loss: {current_result.fun:.4f}, Rounded Loss: {current_rounded_loss:.4f}")
 
-        # The core change: compare based on the rounded loss
         if current_rounded_loss < best_rounded_loss:
             best_rounded_loss = current_rounded_loss
             best_result = current_result
@@ -128,7 +127,6 @@ for i in range(num_starts):
     else:
         print(f"Run {i+1} did not converge. Message: {current_result.message}")
 
-# Check if any successful optimization was found
 if best_result is None:
     raise RuntimeError("Optimization failed to find a solution across all starts. Try increasing max_iter or num_starts.")
 
@@ -142,14 +140,11 @@ print("\n" + "="*30)
 print("      Optimization Results")
 print("="*30)
 
-# --- Calculations ---
-# Use the best result found from all the runs
 b_star = best_result.x
 x_N_star = fk(b_star)
 res_bits = np.round(b_star)
 x_N_bits = fk(res_bits)
 
-# --- Print Results ---
 print(f"Goal: {GOAL}")
 print(f"\nFinal Loss (Unrounded): {loss(b_star):.4f}")
 print(f"Endpoint (Unrounded): {x_N_star}")
@@ -164,7 +159,6 @@ if not os.path.exists(log_dir):
     os.makedirs(log_dir)
     print(f"Created directory: {log_dir}")
 
-# Generate a unique filename based on the current time
 timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
 base_filename = f"run_{timestamp}"
 log_filepath = os.path.join(log_dir, f"{base_filename}.txt")
@@ -176,19 +170,11 @@ def get_all_coords(b_vals):
     """Calculates the coordinates of each joint in the frusta chain."""
     b = b_vals.reshape((2, N))
     theta = np.arcsin(np.clip((b[0, :] - b[1, :]) / D, -1.0, 1.0))
-    world_theta = world_coord(theta) # Use a copy to be safe
+    world_theta = world_coord(theta)
     b_avg = (b[0, :] + b[1, :]) / 2
-
-    coords = np.zeros((N + 1, 2))
-    current_pos = np.array([0., 0.])
-    coords[0, :] = current_pos
-
-    for i in range(N):
-        unit = np.array([np.cos(world_theta[i]), np.sin(world_theta[i])])
-        length = (1 - closed_len) * b_avg[i] + closed_len
-        current_pos = current_pos + length * unit
-        coords[i+1, :] = current_pos
-    return coords
+    
+    # Use the efficient iterative FK calculation
+    return calc_x_iterative(b_avg, world_theta)
 
 def plot_and_save_results(b_continuous, b_binary, filename):
     """Plots the robot configuration and saves it to a file."""
@@ -216,7 +202,6 @@ def plot_and_save_results(b_continuous, b_binary, filename):
     plt.legend(fontsize=10)
     plt.axis('equal')
     
-    # Save the figure to the specified path
     plt.savefig(filename)
     print(f"Figure saved to: {filename}")
     plt.show()
@@ -234,6 +219,7 @@ with open(log_filepath, 'w') as f:
     f.write(f"Binary Regularization (epsilon): {epsilon:.6f}\n")
     f.write(f"Grouping Penalty (zeta):       {zeta:.6f}\n")
     f.write(f"Bending Penalty (xi):          {xi:.6f}\n")
+    f.write(f"Smoothness Penalty (lambda):   {kappa:.6f}\n") 
     f.write(f"Max Iterations: {max_iter}\n")
     f.write(f"Number of Starts: {num_starts}\n")
     f.write(f"Goal: {GOAL}\n\n")
@@ -253,5 +239,4 @@ with open(log_filepath, 'w') as f:
 
 print(f"Log file saved to: {log_filepath}")
 
-# Generate and save the plot
 plot_and_save_results(b_star, res_bits, img_filepath)
