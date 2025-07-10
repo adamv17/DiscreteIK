@@ -15,6 +15,7 @@ closed_len = 1/3.   # Length of closed frusta (l0)
 epsilon = (4e1)/N   # Binary Regularization Term (greater than 0)
 zeta = (1e-1)/N     # Penalize opening a single frustum instead of in groups
 xi = (5e0)/N        # Penalize Bending
+kappa = (1e2)/N     # Penalize "jerkiness" or the second derivative of the angle sequence.
 
 # --- Obstacle Parameters ---
 # Obstacles are now defined as hard constraints, not penalties.
@@ -30,7 +31,7 @@ num_starts = 10     # Number of optimization runs (multi-start)
 #           Goal
 # ----------------------------
 
-GOAL = np.array([50,0])
+GOAL = np.array([N-10, 10])
 
 # ----------------------------
 #       Forward Kinematics
@@ -95,7 +96,18 @@ def loss(b_vals):
     theta = np.arcsin(np.clip((b[0,:] - b[1,:]) / D, -1.0, 1.0))
     reg_bend = xi * np.sum(np.square(theta))
 
-    return dist_sq + reg_bin + reg_group + reg_bend
+    # --- NEW: Second-Derivative Zig-Zag Penalty ---
+    # This penalizes the "jerkiness" or high-frequency oscillations in the
+    # sequence of bend angles, which is the mathematical definition of a zig-zag.
+    # It encourages the robot to form smooth curves.
+    # It is calculated as the sum of squares of the discrete second derivative.
+    if len(theta) > 2:
+        theta_double_prime = theta[2:] - 2 * theta[1:-1] + theta[:-2]
+        reg_zigzag = kappa * np.sum(np.square(theta_double_prime))
+    else:
+        reg_zigzag = 0.0
+
+    return dist_sq + reg_bin + reg_group + reg_bend + reg_zigzag
 
 # ----------------------------
 #         Constraints
@@ -146,6 +158,19 @@ for obstacle in OBSTACLES:
 
     constraints.append({'type': 'ineq', 'fun': segment_constraint_func})
 
+# --- NEW: Constraint Checking Function ---
+def check_constraints(b_vals, consts):
+    """
+    Checks if a given configuration `b_vals` satisfies all defined constraints.
+    Returns True if valid, False otherwise.
+    """
+    for constr in consts:
+        # For 'ineq' constraints, the function's output must be >= 0.
+        result = constr['fun'](b_vals)
+        if np.any(result < -1e-6): # Use a small tolerance for floating point errors
+            return False  # A constraint was violated
+    return True  # All constraints are satisfied
+
 
 # ----------------------------
 #     Initialize Opt. Params.
@@ -165,7 +190,7 @@ best_result = None
 best_rounded_loss = np.inf
 
 print(f"Starting multi-start optimization with {num_starts} runs...")
-print("NOTE: Selecting best solution based on the loss from ROUNDED coefficients.")
+print("NOTE: Selecting best solution based on the loss from a VALID (collision-free) ROUNDED configuration.")
 
 for i in range(num_starts):
     print(f"\n--- Optimization Run {i+1}/{num_starts} ---")
@@ -176,19 +201,26 @@ for i in range(num_starts):
 
     if current_result.success:
         current_res_bits = np.round(current_result.x)
-        current_rounded_loss = loss(current_res_bits)
         
-        print(f"Run {i+1} successful. Continuous Loss: {current_result.fun:.4f}, Rounded Loss: {current_rounded_loss:.4f}")
+        # *** NEW VALIDATION STEP FOR THE BINARY ROBOT ***
+        is_rounded_valid = check_constraints(current_res_bits, constraints)
+        
+        if is_rounded_valid:
+            current_rounded_loss = loss(current_res_bits)
+            print(f"Run {i+1} successful. Rounded solution is VALID. Rounded Loss: {current_rounded_loss:.4f}")
 
-        if current_rounded_loss < best_rounded_loss:
-            best_rounded_loss = current_rounded_loss
-            best_result = current_result
-            print(f"*** New best solution found (Rounded Loss: {best_rounded_loss:.4f})! ***")
+            if current_rounded_loss < best_rounded_loss:
+                best_rounded_loss = current_rounded_loss
+                best_result = current_result
+                print(f"*** New best solution found (Rounded Loss: {best_rounded_loss:.4f})! ***")
+        else:
+            print(f"Run {i+1} successful, but its ROUNDED solution VIOLATES obstacle constraints. Discarding.")
+
     else:
         print(f"Run {i+1} did not converge. Message: {current_result.message}")
 
 if best_result is None:
-    raise RuntimeError("Optimization failed to find a solution across all starts. Try increasing max_iter or num_starts.")
+    raise RuntimeError("Optimization failed to find a valid, collision-free binary solution across all starts. Try increasing max_iter/num_starts or relaxing constraints.")
 
 print("\nMulti-start optimization complete. Using best result for analysis.")
 
@@ -282,6 +314,7 @@ with open(log_filepath, 'w') as f:
     f.write(f"Binary Regularization (epsilon): {epsilon:.6f}\n")
     f.write(f"Grouping Penalty (zeta):       {zeta:.6f}\n")
     f.write(f"Bending Penalty (xi):          {xi:.6f}\n")
+    f.write(f"Zig-Zag Penalty (lambda):      {kappa:.6f}\n")
     f.write(f"Max Iterations: {max_iter}\n")
     f.write(f"Number of Starts: {num_starts}\n")
     f.write(f"Goal: {GOAL}\n")
