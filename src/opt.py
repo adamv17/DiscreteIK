@@ -25,7 +25,7 @@ OBSTACLES = [
 
 
 max_iter = 100      # Max optimizer iterations
-num_starts = 10     # Number of optimization runs (multi-start)
+num_starts = 20     # Number of optimization runs (multi-start)
 
 # ----------------------------
 #           Goal
