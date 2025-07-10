@@ -96,11 +96,6 @@ def loss(b_vals):
     theta = np.arcsin(np.clip((b[0,:] - b[1,:]) / D, -1.0, 1.0))
     reg_bend = xi * np.sum(np.square(theta))
 
-    # --- NEW: Second-Derivative Zig-Zag Penalty ---
-    # This penalizes the "jerkiness" or high-frequency oscillations in the
-    # sequence of bend angles, which is the mathematical definition of a zig-zag.
-    # It encourages the robot to form smooth curves.
-    # It is calculated as the sum of squares of the discrete second derivative.
     if len(theta) > 2:
         theta_double_prime = theta[2:] - 2 * theta[1:-1] + theta[:-2]
         reg_zigzag = kappa * np.sum(np.square(theta_double_prime))
@@ -201,8 +196,7 @@ for i in range(num_starts):
 
     if current_result.success:
         current_res_bits = np.round(current_result.x)
-        
-        # *** NEW VALIDATION STEP FOR THE BINARY ROBOT ***
+
         is_rounded_valid = check_constraints(current_res_bits, constraints)
         
         if is_rounded_valid:
