@@ -14,8 +14,8 @@ closed_len = 1/3.   # Length of closed frusta (l0)
 
 epsilon = (4e1)/N   # Binary Regularization Term (greater than 0)
 zeta = (1e-1)/N     # Penalize opening a single frustum instead of in groups
-xi = (5e0)/N        # Penalize Bending
-kappa = (1e2)/N     # Penalize "jerkiness" or the second derivative of the angle sequence.
+xi = (5e1)/N        # Penalize Bending 
+kappa = (1e3)/N # Penalize "jerkiness" or zig-zagging
 
 # --- Obstacle Parameters ---
 # Obstacles are now defined as hard constraints, not penalties.
@@ -25,7 +25,7 @@ OBSTACLES = [
 
 
 max_iter = 100      # Max optimizer iterations
-num_starts = 20     # Number of optimization runs (multi-start)
+num_starts = 10     # Number of optimization runs (multi-start)
 
 # ----------------------------
 #           Goal
@@ -96,6 +96,9 @@ def loss(b_vals):
     theta = np.arcsin(np.clip((b[0,:] - b[1,:]) / D, -1.0, 1.0))
     reg_bend = xi * np.sum(np.square(theta))
 
+    # --- Second-Derivative Zig-Zag Penalty ---
+    # This penalizes the "jerkiness" or high-frequency oscillations in the
+    # sequence of bend angles, which is the mathematical definition of a zig-zag.
     if len(theta) > 2:
         theta_double_prime = theta[2:] - 2 * theta[1:-1] + theta[:-2]
         reg_zigzag = kappa * np.sum(np.square(theta_double_prime))
@@ -153,7 +156,7 @@ for obstacle in OBSTACLES:
 
     constraints.append({'type': 'ineq', 'fun': segment_constraint_func})
 
-# --- NEW: Constraint Checking Function ---
+# --- Constraint Checking Function ---
 def check_constraints(b_vals, consts):
     """
     Checks if a given configuration `b_vals` satisfies all defined constraints.
@@ -172,8 +175,15 @@ def check_constraints(b_vals, consts):
 # ----------------------------
 
 def init_params():
-    """Generates a random initial guess for the actuator coefficients."""
-    return np.random.rand(2 * N)
+    """
+    Generates a random guess biased towards a straight line.
+    This provides a better starting point for the optimizer.
+    """
+    # Start with a straight, half-extended robot (b1=0.5, b2=0.5)
+    straight_guess = np.full(2 * N, 0.5)
+    # Add a small amount of noise to help the optimizer explore
+    noise = (np.random.rand(2 * N) - 0.5) * 0.1 # Noise between -0.05 and 0.05
+    return np.clip(straight_guess + noise, 0, 1)
 
 # ----------------------------
 #         Optimization
@@ -196,7 +206,8 @@ for i in range(num_starts):
 
     if current_result.success:
         current_res_bits = np.round(current_result.x)
-
+        
+        # *** VALIDATION STEP FOR THE BINARY ROBOT ***
         is_rounded_valid = check_constraints(current_res_bits, constraints)
         
         if is_rounded_valid:
