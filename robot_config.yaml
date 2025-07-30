@@ -1,0 +1,15 @@
+ri: 11.1        # Inner radius mm
+ro: 14.65         # Outer radius mm
+zeta_b: 3.65   # Fixed frustum length mm
+dyn_length: 2.15  #ld
+folded_cell_length: 1.5 # zeta_b-dyn_length=folded_cell_length
+deployed_cell_length: 5.8 # zeta_b+dyn_length=deployed_cell_length
+phi0: 1.57       # Initial angle in radians only for visualization
+bend_angle_const: 0.21  # around 12deg, retrive from the potential function
+xi_ch: 1.0      # Normalization characteristic length
+joints_number: 150 # Number of joints in the robot
+actions_number: 4 # Number of actions in the action space
+actuation_range_open: 5 # Number of cells that likely to open from closed state
+actuation_range_rotate: 5 # Number of cells that likely to rotate from closed state
+bulk: 10 # Number of joints to move together
+end_effector_detection_radius: 100 # Radius of the end effector detection area

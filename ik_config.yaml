@@ -1,0 +1,15 @@
+# Inverse Kinematics Optimization Parameters
+
+# Base values for penalties (will be divided by N in the script)
+epsilon_base: 1e2  # Binary Regularization
+zeta_base: 1e-2    # Not Opening in Groups Penalty
+xi_base: 1e-4      # Angle Penalty
+kappa_base: 5e-2   # Jerkiness Penality (Zig-Zag)
+eta_base: 1e1      # L1 Penalty Bend Penalty       
+
+# Optimizer settings
+max_iter: 200
+num_starts: 10
+
+# Binary search refinement
+num_critical_joints: 5
