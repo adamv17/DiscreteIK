@@ -70,7 +70,7 @@ def _compute_fk_and_intermediates(b_vals, robot_config):
 def calculate_loss(b_vals, goal, robot_config, penalty_weights):
     """
     Computes the objective loss.
-    This version includes penalties for distance, binariness, bend count, and smoothness.
+    This version includes penalties for distance, binariness, bend count, smoothness, and straightness.
     It does NOT compute a gradient.
     """
     N = robot_config['joints_number']
@@ -83,6 +83,7 @@ def calculate_loss(b_vals, goal, robot_config, penalty_weights):
     intermediates = _compute_fk_and_intermediates(b_vals, robot_config)
     x_N = intermediates['coords'][-1]
     control_effort = intermediates['control_effort']
+    b = intermediates['b']
 
     # 1. Distance to goal penalty
     dist_sq = np.sum(np.square(x_N - goal))
@@ -90,16 +91,16 @@ def calculate_loss(b_vals, goal, robot_config, penalty_weights):
     # 2. Binary penalty (encourages values to be 0 or 1)
     reg_bin = -epsilon * np.sum(b_vals * (b_vals - 1.0))
     
-    # 3. L1 penalty on control effort (encourages sparse bending)
-    reg_num_bends = eta * np.sum(np.sqrt(control_effort**2 + 1e-9)) 
+    # 3. Sparsity penalty (penalizes the number of bent joints)
+    bend_indicator = b[0,:] * (1 - b[1,:]) + b[1,:] * (1 - b[0,:])
+    reg_num_bends = eta * np.sum(1-np.exp(-1e3*bend_indicator**2))
     
     # 4. Smoothness penalty (penalizes the second derivative of the control effort)
     reg_smoothness = 0.0
     if N > 2:
-        # This penalizes sharp changes in bending between adjacent joints
         effort_double_prime = control_effort[2:] - 2 * control_effort[1:-1] + control_effort[:-2]
         reg_smoothness = kappa * np.sum(np.square(effort_double_prime))
-    
+
     total_loss = dist_sq + reg_bin + reg_num_bends + reg_smoothness
 
     return total_loss
@@ -112,31 +113,28 @@ def is_configuration_valid(b_vals, obstacles_data, robot_config):
     Checks if a given robot configuration collides with any obstacles.
     Returns True if valid (no collision), False otherwise.
     """
-    if not obstacles_data:
-        return True # No obstacles to collide with
-
     all_coords = fk(b_vals, robot_config, return_all_coords=True)
+    N = robot_config['joints_number']
     
-    for obstacle in obstacles_data:
-        if obstacle['type'] == 'circle':
-            center = np.array(obstacle['center'])
-            radius = obstacle['radius']
-            distances = np.linalg.norm(all_coords - center, axis=1) - radius - robot_config['ro']
-            if np.min(distances) < 0:
-                return False # Collision detected
-        
-        elif obstacle['type'] == 'rectangle':
-            v1, v2 = obstacle['vertices']
-            x_min, z_min = min(v1[0], v2[0]), min(v1[1], v2[1])
-            x_max, z_max = max(v1[0], v2[0]), max(v1[1], v2[1])
-            dx = np.maximum(x_min - all_coords[:, 0], all_coords[:, 0] - x_max)
-            dz = np.maximum(z_min - all_coords[:, 1], all_coords[:, 1] - z_max)
-            dist_outside = np.sqrt(np.maximum(dx, 0)**2 + np.maximum(dz, 0)**2)
-            dist_inside = np.maximum(dx, dz)
-            distances = np.where(dist_inside < 0, dist_inside, dist_outside) - robot_config['ro']
-            if np.min(distances) < 0:
-                return False # Collision detected
-    
+    # Check for external obstacle collision
+    if obstacles_data:
+        for obstacle in obstacles_data:
+            if obstacle['type'] == 'circle':
+                center = np.array(obstacle['center'])
+                radius = obstacle['radius']
+                if np.min(np.linalg.norm(all_coords - center, axis=1) - radius - robot_config['ro']) < 0:
+                    return False
+            elif obstacle['type'] == 'rectangle':
+                v1, v2 = obstacle['vertices']
+                x_min, z_min = min(v1[0], v2[0]), min(v1[1], v2[1])
+                x_max, z_max = max(v1[0], v2[0]), max(v1[1], v2[1])
+                dx = np.maximum(x_min - all_coords[:, 0], all_coords[:, 0] - x_max)
+                dz = np.maximum(z_min - all_coords[:, 1], all_coords[:, 1] - z_max)
+                dist_outside = np.sqrt(np.maximum(dx, 0)**2 + np.maximum(dz, 0)**2)
+                dist_inside = np.maximum(dx, dz)
+                if np.min(np.where(dist_inside < 0, dist_inside, dist_outside) - robot_config['ro']) < 0:
+                    return False
+                    
     return True # No collisions found
 
 def discrete_inverse_kinematics(goal, obstacles_data, robot_config, ik_config):
@@ -150,12 +148,11 @@ def discrete_inverse_kinematics(goal, obstacles_data, robot_config, ik_config):
     num_starts = ik_config['num_starts']
     num_critical_joints = ik_config.get('num_critical_joints', 5)
 
-    # --- Define Simplified Penalty Weight Set ---
-    # NOTE: You will need to add 'kappa_base' to your ik_config.yaml file
+    # --- Define Penalty Weight Set ---
     penalty_weights = {
         'epsilon': (float(ik_config['epsilon_base']) / N),
         'eta': (float(ik_config['eta_base']) / N),
-        'kappa': (float(ik_config['kappa_base']) / N)
+        'kappa': (float(ik_config['kappa_base']) / N),
     }
 
     def init_params():
@@ -234,7 +231,6 @@ def discrete_inverse_kinematics(goal, obstacles_data, robot_config, ik_config):
     best_binary_solution = None
     best_binary_dist = np.inf
 
-    # Check if the initial rounded solution is valid
     if is_configuration_valid(base_solution, obstacles_data, robot_config):
         best_binary_solution = base_solution.copy()
         best_binary_dist = np.linalg.norm(fk(best_binary_solution, robot_config) - goal)
@@ -253,7 +249,6 @@ def discrete_inverse_kinematics(goal, obstacles_data, robot_config, ik_config):
         test_solution = base_solution.copy()
         test_solution[critical_indices] = combination
         
-        # Crucial Step: Check if this binary configuration is valid
         if is_configuration_valid(test_solution, obstacles_data, robot_config):
             dist = np.linalg.norm(fk(test_solution, robot_config) - goal)
             
@@ -267,7 +262,6 @@ def discrete_inverse_kinematics(goal, obstacles_data, robot_config, ik_config):
     if best_binary_solution is None:
         print("\nWARNING: Binary search could not find any valid, collision-free solution.")
         print("Returning the continuous solution from Phase 1. The binary result will be invalid.")
-        # Fallback to a potentially invalid solution for visualization
         best_binary_solution = np.round(best_exploratory_solution)
 
     print(f"Best valid binary distance: {best_binary_dist:.4f}")
@@ -340,7 +334,7 @@ if __name__ == "__main__":
         print(f"Error: Configuration file not found. {e}")
         exit()
     
-    GOAL = np.array(env_config.get('goal', [400, 600]))
+    GOAL = np.array(env_config.get('goal', [0, 800]))
     OBSTACLES = env_config.get('obstacles', [])
 
     action_sequence, res_bits, res_continuous = discrete_inverse_kinematics(GOAL, OBSTACLES, robot_config, ik_config)

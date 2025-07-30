@@ -1,9 +1,9 @@
 # Inverse Kinematics Optimization Parameters
 
 # Base values for penalties (will be divided by N in the script)
-epsilon_base: 4e-1  # Binary Regularization
-eta_base: 1e-2      # L1 Penalty Bend Penalty  
-kappa_base: 5e-4    # Zig-zag Penalty   
+epsilon_base: 8e-1  # Binary Regularization
+eta_base: 5e-2      # Bend Penalty  
+kappa_base: 5e-3    # Smoothness Penalty 
 
 # Optimizer settings
 max_iter: 300
