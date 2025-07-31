@@ -2,8 +2,8 @@
 
 # Base values for penalties (will be divided by N in the script)
 epsilon_base: 8e-1  # Binary Regularization
-eta_base: 5e-2      # Bend Penalty  
-kappa_base: 5e-3    # Smoothness Penalty 
+eta_base: 3e0      # Bend Penalty  
+kappa_base: 1e-2    # Smoothness Penalty 
 
 # Optimizer settings
 max_iter: 300

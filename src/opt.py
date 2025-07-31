@@ -334,7 +334,7 @@ if __name__ == "__main__":
         print(f"Error: Configuration file not found. {e}")
         exit()
     
-    GOAL = np.array(env_config.get('goal', [0, 800]))
+    GOAL = np.array(env_config.get('goal', [-400, 300]))
     OBSTACLES = env_config.get('obstacles', [])
 
     action_sequence, res_bits, res_continuous = discrete_inverse_kinematics(GOAL, OBSTACLES, robot_config, ik_config)
