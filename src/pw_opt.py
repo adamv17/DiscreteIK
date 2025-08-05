@@ -65,7 +65,7 @@ def is_in_obstacle(p: np.ndarray, obstacle: Dict[str, Any]) -> bool:
     obs_type = obstacle.get('type')
     if obs_type == 'rectangle':
         v = np.array(obstacle['vertices'])
-        return (p[0] >= v[0,0] and p[0] <= v[1,0] and p[1] >= v[0,1] and p[1] <= v[1,1])
+        return (p[0] >= min(v[0,0],v[1,0]) and p[0] <= max(v[0,0],v[1,0]) and p[1] >= min(v[0,1],v[1,1]) and p[1] <= max(v[0,1],v[1,1]))
     elif obs_type == 'circle':
         center = np.array(obstacle['center'])
         radius = obstacle['radius']
@@ -125,7 +125,7 @@ def solve_with_plan_and_fit(goal, obstacles, robot_config, ik_config):
         return np.linalg.norm(final_pos - goal)**2
 
     # Exhaustively check all angle combinations
-    possible_angles = [-2*bend_angle, -bend_angle, 0, bend_angle, 2*bend_angle]
+    possible_angles = [-2*bend_angle, 0, 2*bend_angle]
     angle_combinations = list(itertools.product(possible_angles, repeat=NUM_PIECES))
     
     best_result = {'score': float('inf'), 'lengths': None, 'angles': None}
@@ -133,7 +133,7 @@ def solve_with_plan_and_fit(goal, obstacles, robot_config, ik_config):
     for i, angles in enumerate(angle_combinations):
         print(f"Testing angle combination {i+1}/{len(angle_combinations)}", end='\r')
         
-        l0 = [0, 0, 0, 0]
+        l0 = [100, 100, 100, 100]
         bounds = [(0, robot_config['deployed_cell_length'] * N)] * NUM_PIECES
         
         res = minimize(lambda l: cost_function_continuous(l, angles), l0, method='SLSQP', bounds=bounds)
@@ -149,7 +149,7 @@ def solve_with_plan_and_fit(goal, obstacles, robot_config, ik_config):
             best_result['lengths'] = res.x
             best_result['angles'] = angles
     
-    print("%d" % best_result['score'])
+    print("\n%d" % best_result['score'])
     print("\nStage 1 (Continuous Optimization) finished.")
     
     ideal_path_points_coarse = geometric_path_from_continuous(best_result['lengths'], best_result['angles'])
