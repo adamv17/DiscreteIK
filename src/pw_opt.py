@@ -14,7 +14,7 @@ import itertools
 # Number of pieces/segments to use in the initial continuous optimization.
 # Note: The number of angle combinations to check is 3^NUM_PIECES.
 # Keep this value small (e.g., 3-5) for reasonable performance.
-NUM_PIECES = 4 
+NUM_PIECES = 5 
 
 # New penalty for the number of bends in the ideal path.
 # A larger value will result in straighter paths.
@@ -98,7 +98,7 @@ def solve_with_plan_and_fit(goal, obstacles, robot_config, ik_config):
             path_points.append(new_point)
         return np.array(path_points)
 
-    def cost_function_continuous(lengths, angles):
+    def cost_and_grad_func(lengths, angles):
         """Cost function for the continuous path planning stage.
            This function now ONLY returns position error or collision penalty.
         """
@@ -110,7 +110,7 @@ def solve_with_plan_and_fit(goal, obstacles, robot_config, ik_config):
             p1 = path[i]
             p2 = path[i+1]
             segment_len = np.linalg.norm(p2 - p1)
-            # Add an intermediate point every 1mm for collision checking
+            # Add an intermediate point every 5mm for collision checking
             num_intermediate_points = int(segment_len / 1.0)
             if num_intermediate_points > 1:
                 for j in range(1, num_intermediate_points):
@@ -119,10 +119,22 @@ def solve_with_plan_and_fit(goal, obstacles, robot_config, ik_config):
             dense_path_points.append(p2)
         
         if check_collision(np.array(dense_path_points), obstacles):
-            return 1e9
+            return 1e9, np.zeros_like(lengths)
 
         final_pos = path[-1]
-        return np.linalg.norm(final_pos - goal)**2
+        error_vec = final_pos - goal
+        cost = np.linalg.norm(error_vec)**2
+    
+        # Analytical Gradient Calculation
+        grad = np.zeros_like(lengths)
+        # The jacobian of the final position w.r.t. the lengths is just the unit vectors of each piece
+        cumulative_angle = np.pi / 2
+        for k in range(NUM_PIECES):
+            cumulative_angle += angles[k]
+            unit_vec_k = np.array([math.cos(cumulative_angle), math.sin(cumulative_angle)])
+            grad[k] = 2 * np.dot(error_vec, unit_vec_k)
+                
+        return cost, grad
 
     # Exhaustively check all angle combinations
     possible_angles = [-2*bend_angle, 0, 2*bend_angle]
@@ -133,10 +145,10 @@ def solve_with_plan_and_fit(goal, obstacles, robot_config, ik_config):
     for i, angles in enumerate(angle_combinations):
         print(f"Testing angle combination {i+1}/{len(angle_combinations)}", end='\r')
         
-        l0 = [100, 100, 100, 100]
+        l0 = [100, 100, 100, 100, 100]
         bounds = [(0, robot_config['deployed_cell_length'] * N)] * NUM_PIECES
         
-        res = minimize(lambda l: cost_function_continuous(l, angles), l0, method='SLSQP', bounds=bounds)
+        res = minimize(lambda l: cost_and_grad_func(l, angles), l0,  method='L-BFGS-B', jac=True, bounds=bounds)
         
         # Calculate a total score that includes the bend penalty
         position_or_collision_cost = res.fun
@@ -267,7 +279,7 @@ if __name__ == "__main__":
         print(f"Error: Config file not found. {e}")
         exit()
     
-    GOAL = np.array(env_config.get('goal', [0, 800]))
+    GOAL = np.array(env_config.get('goal', [-300, 400]))
     OBSTACLES = env_config.get('obstacles', [])
     
     final_b, ideal_path = solve_with_plan_and_fit(GOAL, OBSTACLES, robot_config, ik_config)
