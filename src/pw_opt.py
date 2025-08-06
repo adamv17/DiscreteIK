@@ -161,6 +161,9 @@ def solve_with_plan_and_fit(goal, obstacles, robot_config, ik_config):
             best_result['score'] = total_score
             best_result['lengths'] = res.x
             best_result['angles'] = angles
+        
+        if position_or_collision_cost < 100 and num_bends < N - 2:
+            break 
     
     print("\n%d" % best_result['score'])
     print("\nStage 1 (Continuous Optimization) finished.")
