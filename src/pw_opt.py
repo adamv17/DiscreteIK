@@ -110,7 +110,7 @@ def solve_with_plan_and_fit(goal, obstacles, robot_config, ik_config):
             p1 = path[i]
             p2 = path[i+1]
             segment_len = np.linalg.norm(p2 - p1)
-            # Add an intermediate point every 5mm for collision checking
+            # Add an intermediate point every 1mm for collision checking
             num_intermediate_points = int(segment_len / 1.0)
             if num_intermediate_points > 1:
                 for j in range(1, num_intermediate_points):
@@ -145,7 +145,8 @@ def solve_with_plan_and_fit(goal, obstacles, robot_config, ik_config):
     for i, angles in enumerate(angle_combinations):
         print(f"Testing angle combination {i+1}/{len(angle_combinations)}", end='\r')
         
-        l0 = [100, 100, 100, 100, 100]
+        l_avg = robot_config['deployed_cell_length'] * N // NUM_PIECES
+        l0 = [ random.randint(0, l_avg) for i in range(NUM_PIECES)]
         bounds = [(0, robot_config['deployed_cell_length'] * N)] * NUM_PIECES
         
         res = minimize(lambda l: cost_and_grad_func(l, angles), l0,  method='L-BFGS-B', jac=True, bounds=bounds)
@@ -279,7 +280,7 @@ if __name__ == "__main__":
         print(f"Error: Config file not found. {e}")
         exit()
     
-    GOAL = np.array(env_config.get('goal', [-300, 400]))
+    GOAL = np.array(env_config.get('goal', [0, 800]))
     OBSTACLES = env_config.get('obstacles', [])
     
     final_b, ideal_path = solve_with_plan_and_fit(GOAL, OBSTACLES, robot_config, ik_config)
